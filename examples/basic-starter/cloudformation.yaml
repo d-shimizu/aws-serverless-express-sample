@@ -1,0 +1,185 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Serverless Express Application/API powered by API Gateway and Lambda
+Resources:
+  ApiGatewayApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      DefinitionUri: ./simple-proxy-api.yaml
+      StageName:
+        Ref: Environment
+      #StageName: dev
+      Variables:
+        ServerlessExpressLambdaFunctionName: !Ref AwsServerlessExpressFunctionStg
+      MethodSettings:
+        - DataTraceEnabled: true
+          LoggingLevel: 'ERROR'
+          ResourcePath: '/*'
+          HttpMethod: '*'
+          MetricsEnabled: true
+      AccessLogSetting:
+        DestinationArn: !Join
+          - ''
+          - - "arn:aws:logs:ap-northeast-1:"
+            - !Ref AWS::AccountId
+            - ":"
+            - "log-group:/aws/apigateway/accesslog/"
+            - !Ref ApiGatewayApi
+            #- "-"
+            #- AWS::RestApi
+            #- !GetAtt ApiGatewayTitle
+        Format: "{
+                    'stage' : '$context.stage',
+                    'request_id' : '$context.requestId',
+                    'api_id' : '$context.apiId',
+                    'resource_path' : '$context.resourcePath',
+                    'resource_id' : '$context.resourceId',
+                    'http_method' : '$context.httpMethod',
+                    'source_ip' : '$context.identity.sourceIp',
+                    'user-agent' : '$context.identity.userAgent',
+                    'account_id' : '$context.identity.accountId',
+                    'api_key' : '$context.identity.apiKey',
+                    'caller' : '$context.identity.caller',
+                    'user' : '$context.identity.user',
+                    'user_arn' : '$context.identity.userArn'
+                }"
+
+#  ApiGatewayLoggingRole:
+#    Type: "AWS::IAM::Role"
+#    Properties:
+#      AssumeRolePolicyDocument:
+#        Version: "2012-10-17"
+#        Statement:
+#          - Effect: Allow
+#            Principal:
+#              Service:
+#                - "apigateway.amazonaws.com"
+#            Action: "sts:AssumeRole"
+#      Path: "/"
+#      ManagedPolicyArns:
+#        - !Sub "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+      #RoleName: AmazonAPIGatewayPushToCloudWatchLogsRole
+
+#  ApiGwAccountConfig:
+#    Type: "AWS::ApiGateway::Account"
+#    Properties:
+#      #CloudWatchRoleArn: arn:aws:iam::208991981080:role/AmazonAPIGatewayPushToCloudWatchLogsRole
+#      CloudWatchRoleArn: !GetAtt 
+#        - ApiGatewayLoggingRole
+#        - Arn
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:*
+
+  LambdaApiGatewayExecutionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt AwsServerlessExpressFunctionStg.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join
+        - ''
+        - - 'arn:aws:execute-api:'
+          - !Ref AWS::Region
+          - ":"
+          - !Ref AWS::AccountId
+          - ":"
+          - !Ref ApiGatewayApi
+          - "/*/*"
+
+  AwsServerlessExpressFunctionStg:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: lambda.handler
+      MemorySize: 1024
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: nodejs8.10
+      Timeout: 30
+      Events:
+        ProxyApiRoot:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGatewayApi
+            Path: /
+            Method: ANY
+        ProxyApiGreedy:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGatewayApi
+            Path: /{proxy+}
+            Method: ANY
+      #VpcConfig:
+      #  SubnetIds:
+      #    - subnet-04e7f2085a65294e6
+      #  SecurityGroupIds:
+      #    - sg-01fbca28e3d49a1ca
+      #Role: arn:aws:iam:208991981080:aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+Outputs:
+  LambdaFunctionConsoleUrl:
+    Description: Console URL for the Lambda Function.
+    Value: !Join
+      - ''
+      - - https://
+        - !Ref AWS::Region
+        - ".console.aws.amazon.com/lambda/home?region="
+        - !Ref AWS::Region
+        - "#/functions/"
+        - !Ref AwsServerlessExpressFunctionStg
+
+  ApiGatewayApiConsoleUrl:
+    Description: Console URL for the API Gateway API's Stage.
+    Value: !Join
+      - ''
+      - - https://
+        - !Ref AWS::Region
+        - ".console.aws.amazon.com/apigateway/home?region="
+        - !Ref AWS::Region
+        - "#/apis/"
+        - !Ref ApiGatewayApi
+        - "/stages/prod"
+
+  ApiUrl:
+    Description: Invoke URL for your API. Clicking this link will perform a GET request
+      on the root resource of your API.
+    Value: !Join
+      - ''
+      - - https://
+        - !Ref ApiGatewayApi
+        - ".execute-api."
+        - !Ref AWS::Region
+        - ".amazonaws.com/prod/"
+
+Parameters: 
+  #MyBucketName:
+  #  Type: String 
+  Environment:
+    Type: String
+    AllowedValues: 
+      - dev
+      - stg
+      - prod
+    #Default: dev
+    Default: prod
